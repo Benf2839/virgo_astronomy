@@ -1,90 +1,87 @@
-#!/usr/bin/env python3
-
 import socket
 import struct
 import numpy as np
-import virgo  # Make sure to install astro-virgo library
+import virgo
 
-class EclypseZ7Source:
-    '''Eclypse Z7 Source'''
+# Define TCP/IP connection parameters
+TCP_IP = '73.117.151.70'  # Replace with your actual IP
+TCP_PORT = 1001  # Replace with your actual port
+BUFFER_SIZE = 16384  # Buffer size for receiving data
 
-    rates = {24000: 0, 48000: 1, 96000: 2, 192000: 3, 384000: 4, 768000: 5, 1536000: 6}
+# Define observation parameters for virgo
+obs = {
+    'dev_args': '',
+    'rf_gain': 30,
+    'if_gain': 25,
+    'bb_gain': 18,
+    'frequency': 1420e6,
+    'bandwidth': 2.4e6,
+    'channels': 2048,
+    't_sample': 1,
+    'duration': 60,  # Observation duration in seconds
+    'loc': '',
+    'ra_dec': '',
+    'az_alt': ''
+}
 
-    def __init__(self, addr, port, freq, rate, corr):
-        self.addr = addr
-        self.port = port
-        self.ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Connect to the control and data sockets
-        self.ctrl_sock.connect((addr, port))
-        self.ctrl_sock.send(struct.pack('<I', 0))  # Initialize control connection
-
-        self.data_sock.connect((addr, port))
-        self.data_sock.send(struct.pack('<I', 1))  # Initialize data connection
-
-        # Set frequency and rate
-        self.set_freq(freq, corr)
-        self.set_rate(rate)
-
-        # Start receiving and processing data
-        self.process_received_data()
-
-    def set_freq(self, freq, corr):
-        self.ctrl_sock.send(struct.pack('<I', 0 << 28 | int((1.0 + 1e-6 * corr) * freq)))
-
-    def set_rate(self, rate):
-        if rate in EclypseZ7Source.rates:
-            code = EclypseZ7Source.rates[rate]
-            self.ctrl_sock.send(struct.pack('<I', 1 << 28 | code))
-        else:
-            raise ValueError("Acceptable sample rates are 24k, 48k, 96k, 192k, 384k, 768k, 1536k")
-
-    def process_received_data(self):
-        '''Receive data from the data socket and process it.'''
+def receive_data():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            print("Starting data reception...")
+            print(f"Connecting to {TCP_IP}:{TCP_PORT}...")
+            sock.connect((TCP_IP, TCP_PORT))
+            print("Connection established!")
+
             while True:
-                # Receive data from the socket
-                data = self.data_sock.recv(16384)  # Adjust buffer size as needed
-                if data:
-                    print(f"Received {len(data)} bytes of data.")
-
-                    # Process data into complex IQ format
-                    num_samples = len(data) // 8  # Each complex sample is 8 bytes (4 bytes for real + 4 bytes for imaginary)
-                    fmt = f'<{num_samples}ff'  # Format string for struct.unpack
-                    iq_data = struct.unpack(fmt, data)
-                    complex_data = np.array(iq_data).reshape(-1, 2)  # Reshape into pairs of (real, imag)
-                    complex_samples = complex_data[:, 0] + 1j * complex_data[:, 1]
-
-                    # Process the complex samples using the Virgo library
-                    self.process_observation(complex_samples)
-                else:
-                    print("No more data received.")
+                # Receive data from the stream
+                data = sock.recv(BUFFER_SIZE)
+                if not data:
+                    print("No data received or connection closed.")
                     break
-        except Exception as e:
-            print(f"Error receiving data: {e}")
-        finally:
-            print("Closing sockets...")
-            self.data_sock.close()
-            self.ctrl_sock.close()
 
-    def process_observation(self, complex_samples):
-        '''Process the complex samples using Virgo and display results.'''
-        try:
-            virgo = Virgo()  # Create an instance of the Virgo class
-            result = virgo.process_observation(complex_samples)  # Process the data
-            print(f"Processed Data Result: {result}")  # Display the result
-        except Exception as e:
-            print(f"Error processing observation: {e}")
+                # Debugging: Print the received data in hex format
+                print(f"Received raw data (hex): {data.hex()}")
+
+                # Unpack data as IQ samples (assuming 16-bit signed integers for I and Q)
+                # '<' = little-endian, 'h' = signed 16-bit integer
+                num_samples = len(data) // 4  # Each sample is 4 bytes (2 bytes I + 2 bytes Q)
+                iq_data = struct.unpack(f'<{2*num_samples}h', data)
+
+                # Convert to complex numbers: I + jQ
+                complex_data = np.array(iq_data[0::2]) + 1j * np.array(iq_data[1::2])
+
+                # Debugging: Print the first few IQ samples
+                print(f"First 5 IQ samples: {complex_data[:5]}")
+
+                # Process the received IQ data using Virgo
+                process_observation(complex_data)
+
+        except socket.error as e:
+            print(f"Socket error: {e}")
+        except KeyboardInterrupt:
+            print("Interrupted by user.")
+
+# Process the received observation data using Virgo
+def process_observation(data):
+    # Debugging: Print the number of IQ samples received
+    print(f"Number of IQ samples received: {len(data)}")
+
+    # Save the raw IQ data into a temporary file for Virgo (optional)
+    temp_obs_file = 'temp_observation.dat'
+    with open(temp_obs_file, 'wb') as f:
+        f.write(data.astype(np.complex64).tobytes())  # Save as 32-bit complex
+
+    # Perform the observation and analysis using Virgo
+    print("Running Virgo observation and plotting...")
+    virgo.observe(obs_parameters=obs, obs_file=temp_obs_file)
+
+    # Plot and analyze the data (for hydrogen line at 1420.4057517667 MHz)
+    virgo.plot(obs_parameters=obs, n=20, m=35, f_rest=1420.4057517667e6,
+               vlsr=False, meta=False, avg_ylim=(-5, 15), cal_ylim=(-20, 260),
+               obs_file=temp_obs_file, rfi=[(1419.2e6, 1419.3e6), (1420.8e6, 1420.9e6)],
+               dB=True, spectra_csv='spectrum.csv', plot_file='plot.png')
+
+    print("Observation complete, plot saved as plot.png and data exported to spectrum.csv")
 
 if __name__ == "__main__":
-    # Replace these parameters with your device-specific configuration
-    addr = "192.168.178.64"  # Device IP address
-    port = 1001  # Device port number
-    freq = 1420405000  # Frequency in Hz (example: 1.420405 GHz)
-    rate = 768000  # Sample rate
-    corr = 0  # Frequency correction in ppm
-
-    # Create an instance of the EclypseZ7Source and start processing data
-    eclypse_source = EclypseZ7Source(addr, port, freq, rate, corr)
+    # Start the data stream and observation process
+    receive_data()
