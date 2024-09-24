@@ -1,52 +1,78 @@
 import socket
-import virgo  # Assuming virgo is properly installed from the GitHub repo
+import virgo
+import numpy as np
+import struct
+import time
 
-# Define the IP address and port for the TCP connection
+# Define TCP/IP connection parameters
 TCP_IP = '73.117.151.70'
 TCP_PORT = 1001
-BUFFER_SIZE = 4096  # Adjust as needed based on expected data size
+BUFFER_SIZE = 4096  # Adjust the buffer size based on expected data
 
-def main():
-    # Create a TCP socket
+# Define observation parameters for virgo
+obs = {
+    'dev_args': '',
+    'rf_gain': 30,
+    'if_gain': 25,
+    'bb_gain': 18,
+    'frequency': 1420e6,
+    'bandwidth': 2.4e6,
+    'channels': 2048,
+    't_sample': 1,
+    'duration': 60,  # Duration of observation in seconds
+    'loc': '',
+    'ra_dec': '',
+    'az_alt': ''
+}
+
+# Connect to the custom TCP/IP data stream
+def receive_data():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            # Connect to the remote device broadcasting data
             sock.connect((TCP_IP, TCP_PORT))
             print(f"Connected to {TCP_IP}:{TCP_PORT}")
-
-            # Continuously receive data from the stream
-            data_buffer = b''  # Buffer to store incoming data
+            
+            data_buffer = b''
             while True:
-                # Receive data from the socket
+                # Receive data from the stream
                 data = sock.recv(BUFFER_SIZE)
                 if not data:
                     print("Connection closed by the server.")
                     break
-
-                # Append the received data to the buffer
                 data_buffer += data
 
-                # Process the received data using the Virgo package
-                # Assuming the virgo package has a method to parse or process the data
-                try:
-                    # This part will depend on how the virgo package works
-                    # For example, it might have a method like virgo.process_observation
-                    observation = virgo.process_observation(data_buffer)
-                    
-                    # If observation is successfully processed, do something with it
-                    print(f"Processed Observation: {observation}")
+                # Assume the data is being streamed in a float format and unpack it
+                float_data = struct.unpack(f'{len(data_buffer) // 4}f', data_buffer)
+                np_data = np.array(float_data)
 
-                    # Clear the buffer once processed
-                    data_buffer = b''
+                # Process the received data using Virgo
+                process_observation(np_data)
 
-                except Exception as e:
-                    print(f"Error processing data: {e}")
-                    continue
+                # Clear the buffer for the next data batch
+                data_buffer = b''
 
         except socket.error as e:
             print(f"Socket error: {e}")
         except KeyboardInterrupt:
-            print("Terminating the connection.")
+            print("Interrupted by user.")
+
+# Process the received observation data using Virgo
+def process_observation(data):
+    # Save the raw data into a temporary file (optional)
+    temp_obs_file = 'temp_observation.dat'
+    with open(temp_obs_file, 'wb') as f:
+        f.write(data.tobytes())
+
+    # Perform the observation and analysis using virgo
+    virgo.observe(obs_parameters=obs, obs_file=temp_obs_file)
+
+    # Plot and analyze the data (for hydrogen line at 1420.4057517667 MHz)
+    virgo.plot(obs_parameters=obs, n=20, m=35, f_rest=1420.4057517667e6,
+               vlsr=False, meta=False, avg_ylim=(-5, 15), cal_ylim=(-20, 260),
+               obs_file=temp_obs_file, rfi=[(1419.2e6, 1419.3e6), (1420.8e6, 1420.9e6)],
+               dB=True, spectra_csv='spectrum.csv', plot_file='plot.png')
+    print("Observation complete, plot saved as plot.png and data exported to spectrum.csv")
 
 if __name__ == "__main__":
-    main()
+    # Start the data stream and observation process
+    receive_data()
