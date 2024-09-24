@@ -3,6 +3,7 @@
 import socket
 import struct
 import numpy as np
+from astro_virgo import Virgo  # Make sure to install astro-virgo library
 
 class EclypseZ7Source:
     '''Eclypse Z7 Source'''
@@ -26,8 +27,8 @@ class EclypseZ7Source:
         self.set_freq(freq, corr)
         self.set_rate(rate)
 
-        # Start receiving and writing data to a file
-        self.write_received_data_to_file()
+        # Start receiving and processing data
+        self.process_received_data()
 
     def set_freq(self, freq, corr):
         self.ctrl_sock.send(struct.pack('<I', 0 << 28 | int((1.0 + 1e-6 * corr) * freq)))
@@ -39,40 +40,43 @@ class EclypseZ7Source:
         else:
             raise ValueError("Acceptable sample rates are 24k, 48k, 96k, 192k, 384k, 768k, 1536k")
 
-    def write_received_data_to_file(self):
-        '''Receive data from the data socket and write to a file.'''
+    def process_received_data(self):
+        '''Receive data from the data socket and process it.'''
         try:
-            with open("received_data.bin", "wb") as bin_file, open("received_data_hex.txt", "w") as hex_file:
-                print("Starting data reception...")
-                while True:
-                    # Receive data from the socket
-                    data = self.data_sock.recv(16384)  # Adjust buffer size as needed
-                    if data:
-                        print(f"Received {len(data)} bytes of data.")
-                        bin_file.write(data)  # Write raw binary data to file
+            print("Starting data reception...")
+            while True:
+                # Receive data from the socket
+                data = self.data_sock.recv(16384)  # Adjust buffer size as needed
+                if data:
+                    print(f"Received {len(data)} bytes of data.")
 
-                        # Process data into complex IQ format
-                        num_samples = len(data) // 8  # Each complex sample is 8 bytes (4 bytes for real + 4 bytes for imaginary)
-                        fmt = f'<{num_samples}ff'  # Format string for struct.unpack
-                        iq_data = struct.unpack(fmt, data)
-                        complex_data = np.array(iq_data).reshape(-1, 2)  # Reshape into pairs of (real, imag)
-                        complex_samples = complex_data[:, 0] + 1j * complex_data[:, 1]
+                    # Process data into complex IQ format
+                    num_samples = len(data) // 8  # Each complex sample is 8 bytes (4 bytes for real + 4 bytes for imaginary)
+                    fmt = f'<{num_samples}ff'  # Format string for struct.unpack
+                    iq_data = struct.unpack(fmt, data)
+                    complex_data = np.array(iq_data).reshape(-1, 2)  # Reshape into pairs of (real, imag)
+                    complex_samples = complex_data[:, 0] + 1j * complex_data[:, 1]
 
-                        # Debug output for first few samples
-                        print(f"First 5 complex samples: {complex_samples[:5]}")
-
-                        # Write hex representation to hex file
-                        hex_view = data.hex()  # Convert the binary data to hexadecimal representation
-                        hex_file.write(f"{hex_view}\n")  # Write the hex view to the text file
-                    else:
-                        print("No more data received.")
-                        break
+                    # Process the complex samples using the Virgo library
+                    self.process_observation(complex_samples)
+                else:
+                    print("No more data received.")
+                    break
         except Exception as e:
             print(f"Error receiving data: {e}")
         finally:
             print("Closing sockets...")
             self.data_sock.close()
             self.ctrl_sock.close()
+
+    def process_observation(self, complex_samples):
+        '''Process the complex samples using Virgo and display results.'''
+        try:
+            virgo = Virgo()  # Create an instance of the Virgo class
+            result = virgo.process_observation(complex_samples)  # Process the data
+            print(f"Processed Data Result: {result}")  # Display the result
+        except Exception as e:
+            print(f"Error processing observation: {e}")
 
 if __name__ == "__main__":
     # Replace these parameters with your device-specific configuration
@@ -82,5 +86,5 @@ if __name__ == "__main__":
     rate = 768000  # Sample rate
     corr = 0  # Frequency correction in ppm
 
-    # Create an instance of the EclypseZ7Source and start writing data to a file
+    # Create an instance of the EclypseZ7Source and start processing data
     eclypse_source = EclypseZ7Source(addr, port, freq, rate, corr)
