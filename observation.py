@@ -3,7 +3,7 @@
 import socket
 import struct
 import numpy as np
-import Virgo  # Make sure to install astro-virgo library
+import virgo  # Make sure to install astro-virgo library
 
 class EclypseZ7Source:
     '''Eclypse Z7 Source'''
